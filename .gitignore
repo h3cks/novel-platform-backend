@@ -1,0 +1,24 @@
+# IDE
+.idea/
+.vscode/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# DB dumps / backups
+*.dump
+*.sql
+*.sqlite
+
+# Node
+node_modules/
+dist/
+build/
+coverage/
+*.log
+
+# Prisma generated (зазвичай не комітять)
+backend/src/generated/
+backend/src/generated/**

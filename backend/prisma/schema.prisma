@@ -1,0 +1,254 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+enum UserRole {
+  READER
+  AUTHOR
+  MODERATOR
+  ADMIN
+}
+
+enum NovelStatus {
+  DRAFT
+  REVIEWING
+  PUBLISHED
+  BLOCKED
+}
+
+enum ReportStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+  ESCALATED
+}
+
+model User {
+  id                   Int       @id @default(autoincrement())
+  email                String?   @unique
+  username             String?   @unique
+  password             String
+  displayName          String?
+  emailConfirmed       Boolean   @default(false)
+  emailConfirmToken    String?   @db.VarChar(255)
+  emailConfirmExpires  DateTime?
+  passwordResetToken   String?   @db.VarChar(255)
+  passwordResetExpires DateTime?
+  avatarUrl            String?
+  role                 UserRole  @default(READER)
+  createdAt            DateTime  @default(now())
+
+  novels   Novel[]
+  comments Comment[]
+  ratings  Rating[]
+  follows  Follow[]
+  views    ViewHistory[]
+  reports  Report[]
+
+  processedReports Report[] @relation("ProcessedBy")
+
+  notifications Notification[]
+
+  following UserFollow[] @relation("Follower")
+
+  followers UserFollow[] @relation("Author")
+}
+
+model Novel {
+  id            Int         @id @default(autoincrement())
+  authorId      Int
+  author        User        @relation(fields: [authorId], references: [id])
+  title         String
+  description   String?
+  status        NovelStatus @default(DRAFT)
+  coverUrl      String?
+  autoPublished Boolean     @default(false)
+  publishedAt   DateTime?
+  wordCount     Int?
+  flagged       Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  chapters  Chapter[]
+  comments  Comment[]
+  ratings   Rating[]
+  tags      NovelTag[]
+  genres    NovelGenre[]
+  followers Follow[]
+  views     ViewHistory[]
+
+  @@index([title])
+  @@index([status])
+  @@index([authorId])
+}
+
+model Chapter {
+  id            Int           @id @default(autoincrement())
+  novelId       Int
+  novel         Novel         @relation(fields: [novelId], references: [id])
+  title         String
+  content       String        @db.Text
+  wordCount     Int?
+  order         Int
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  languageRatio Float?
+  comments      Comment[]
+  views         ViewHistory[]
+
+  @@unique([novelId, order])
+}
+
+model Comment {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id])
+  novelId   Int?
+  novel     Novel?    @relation(fields: [novelId], references: [id])
+  chapterId Int?
+  chapter   Chapter?  @relation(fields: [chapterId], references: [id])
+  parentId  Int?
+  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies   Comment[] @relation("CommentReplies")
+  text      String    @db.Text
+  deleted   Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([novelId])
+  @@index([chapterId])
+  @@index([parentId])
+}
+
+model Rating {
+  id      Int   @id @default(autoincrement())
+  novelId Int
+  novel   Novel @relation(fields: [novelId], references: [id])
+  userId  Int
+  user    User  @relation(fields: [userId], references: [id])
+  score   Int
+
+  @@unique([novelId, userId])
+}
+
+model Tag {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  slug        String?  @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  novels NovelTag[]
+
+  @@index([name])
+  @@index([slug])
+}
+
+model NovelTag {
+  novelId Int
+  tagId   Int
+  novel   Novel @relation(fields: [novelId], references: [id])
+  tag     Tag   @relation(fields: [tagId], references: [id])
+
+  @@id([novelId, tagId])
+}
+
+model Genre {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  slug        String?  @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  novels NovelGenre[]
+
+  @@index([name])
+  @@index([slug])
+}
+
+model NovelGenre {
+  novelId Int
+  genreId Int
+  novel   Novel @relation(fields: [novelId], references: [id])
+  genre   Genre @relation(fields: [genreId], references: [id])
+
+  @@id([novelId, genreId])
+}
+
+model Follow {
+  userId    Int
+  novelId   Int
+  user      User     @relation(fields: [userId], references: [id])
+  novel     Novel    @relation(fields: [novelId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@id([userId, novelId])
+}
+
+model UserFollow {
+  followerId Int
+  authorId   Int
+  follower   User     @relation("Follower", fields: [followerId], references: [id])
+  author     User     @relation("Author", fields: [authorId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@id([followerId, authorId])
+}
+
+model ViewHistory {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  novelId   Int?
+  novel     Novel?   @relation(fields: [novelId], references: [id])
+  chapterId Int?
+  chapter   Chapter? @relation(fields: [chapterId], references: [id])
+  viewedAt  DateTime @default(now())
+}
+
+model Report {
+  id         Int      @id @default(autoincrement())
+  reporterId Int
+  reporter   User     @relation(fields: [reporterId], references: [id])
+  targetType String
+  targetId   Int
+  reason     String
+  detail     String?
+  createdAt  DateTime @default(now())
+
+  status           ReportStatus @default(OPEN)
+  moderatorId      Int?
+  moderator        User?        @relation("ProcessedBy", fields: [moderatorId], references: [id])
+  moderatorComment String?
+
+  actionTaken     String?
+  actionTakenNote String?
+
+  @@index([targetType, targetId])
+  @@index([status])
+  @@index([reporterId])
+}
+
+model Notification {
+  id         Int      @id @default(autoincrement())
+  userId     Int?
+  type       String
+  targetType String?
+  targetId   Int?
+  taskId     Int?
+  actorId    Int?
+  message    String
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
