@@ -1,7 +1,15 @@
-// src/services/comment.service.ts
 import prisma from '../prisma/client';
 import { sanitizeContent } from '../utils/text';
 
+/**
+ * Дані для створення коментаря.
+ * @typedef {Object} CreateCommentInput
+ * @property {number} userId - ID автора коментаря.
+ * @property {number} [novelId] - ID новели (якщо коментар до новели).
+ * @property {number} [chapterId] - ID розділу (якщо коментар до розділу).
+ * @property {number} [parentId] - ID батьківського коментаря (для відповідей).
+ * @property {string} text - Текст коментаря.
+ */
 type CreateCommentInput = {
   userId: number;
   novelId?: number | null;
@@ -12,6 +20,13 @@ type CreateCommentInput = {
 
 const MAX_REPLY_DEPTH = 5; // policy: max nesting to avoid runaway threads
 
+/**
+ * Обчислює поточну глибину вкладеності відповідей на коментарі.
+ * Використовується для запобігання надто глибоким "гілкам" обговорень.
+ * * @async
+ * @param {number | null} parentId - ID батьківського коментаря.
+ * @returns {Promise<number>} Глибина вкладеності (0, якщо parentId відсутній).
+ */
 async function computeReplyDepth(parentId: number | null): Promise<number> {
   if (!parentId) return 0;
   let depth = 1;
@@ -26,6 +41,17 @@ async function computeReplyDepth(parentId: number | null): Promise<number> {
   return depth;
 }
 
+/**
+ * Створює новий коментар або відповідь на існуючий.
+ * Виконує перевірку на максимально допустиму глибину вкладеності відповідей (MAX_REPLY_DEPTH).
+ * * @async
+ * @param {CreateCommentInput} input - Дані для створення коментаря.
+ * @returns {Promise<Object>} Створений об'єкт коментаря.
+ * @throws {Error} INVALID_TEXT, якщо текст відсутній.
+ * @throws {Error} PARENT_NOT_FOUND, якщо батьківський коментар не знайдено.
+ * @throws {Error} MAX_DEPTH, якщо перевищено ліміт вкладеності відповідей.
+ * @throws {Error} MISSING_TARGET, якщо не вказано ні novelId, ні chapterId, ні parentId.
+ */
 export async function createComment(input: CreateCommentInput) {
   // validation
   if (!input.text || typeof input.text !== 'string' || input.text.trim().length === 0) {
@@ -87,8 +113,12 @@ export async function createComment(input: CreateCommentInput) {
 }
 
 /**
- * List top-level comments for a novel (or chapter)
- * Returns: items array of comments with `replies` (first-level) included
+ * Отримує кореневі (top-level) коментарі для конкретної новели з підвантаженням відповідей першого рівня.
+ * * @async
+ * @param {number} novelId - Ідентифікатор новели.
+ * @param {number} [page=1] - Номер сторінки.
+ * @param {number} [limit=20] - Кількість коментарів на сторінку.
+ * @returns {Promise<{items: Array, meta: {page: number, limit: number, total: number}}>} Список коментарів та пагінація.
  */
 export async function listCommentsByNovel(novelId: number, page = 1, limit = 20) {
   const p = Math.max(1, page);
@@ -117,6 +147,14 @@ export async function listCommentsByNovel(novelId: number, page = 1, limit = 20)
   return { items, meta: { page: p, limit: l, total } };
 }
 
+/**
+ * Отримує кореневі (top-level) коментарі для конкретного розділу з підвантаженням відповідей.
+ * * @async
+ * @param {number} chapterId - Ідентифікатор розділу.
+ * @param {number} [page=1] - Номер сторінки.
+ * @param {number} [limit=20] - Кількість коментарів на сторінку.
+ * @returns {Promise<{items: Array, meta: {page: number, limit: number, total: number}}>} Список коментарів та пагінація.
+ */
 export async function listCommentsByChapter(chapterId: number, page = 1, limit = 20) {
   // same as above but where: { chapterId, parentId: null }
   const p = Math.max(1, page);
@@ -145,6 +183,12 @@ export async function listCommentsByChapter(chapterId: number, page = 1, limit =
   return { items, meta: { page: p, limit: l, total } };
 }
 
+/**
+ * Отримує коментар за його ідентифікатором разом з інформацією про автора та відповідями.
+ * * @async
+ * @param {number} id - Ідентифікатор коментаря.
+ * @returns {Promise<Object | null>} Об'єкт коментаря або null.
+ */
 export async function getCommentById(id: number) {
   const c = await prisma.comment.findUnique({
     where: { id },
@@ -153,6 +197,17 @@ export async function getCommentById(id: number) {
   return c;
 }
 
+/**
+ * Оновлює текст існуючого коментаря. Редагувати може лише автор.
+ * * @async
+ * @param {number} commentId - Ідентифікатор коментаря.
+ * @param {number} actorId - ID користувача, що ініціює зміну.
+ * @param {Object} data - Нові дані.
+ * @param {string} [data.text] - Новий текст коментаря.
+ * @returns {Promise<Object>} Оновлений об'єкт коментаря.
+ * @throws {Error} NOT_FOUND, якщо коментар не знайдено.
+ * @throws {Error} FORBIDDEN, якщо користувач не є автором коментаря.
+ */
 export async function updateComment(commentId: number, actorId: number, data: { text?: string }) {
   const comment = await prisma.comment.findUnique({ where: { id: commentId } });
   if (!comment) throw Object.assign(new Error('Comment not found'), { code: 'NOT_FOUND' });
@@ -167,6 +222,17 @@ export async function updateComment(commentId: number, actorId: number, data: { 
   return updated;
 }
 
+/**
+ * М'яке видалення (soft delete) коментаря.
+ * Замінює текст коментаря на '[deleted]' і встановлює прапорець deleted: true.
+ * Дозволено лише автору коментаря або адміністратору.
+ * * @async
+ * @param {number} commentId - ID коментаря для видалення.
+ * @param {number} actorId - ID користувача, що виконує дію.
+ * @returns {Promise<Object>} Оновлений об'єкт коментаря.
+ * @throws {Error} NOT_FOUND, якщо коментар не існує.
+ * @throws {Error} FORBIDDEN, якщо користувач не має прав на видалення.
+ */
 export async function deleteComment(commentId: number, actorId: number) {
   const comment = await prisma.comment.findUnique({ where: { id: commentId } });
   if (!comment) throw Object.assign(new Error('Comment not found'), { code: 'NOT_FOUND' });

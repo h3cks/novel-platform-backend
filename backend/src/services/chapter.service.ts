@@ -1,9 +1,9 @@
-// src/services/chapter.service.ts
 import prisma from '../prisma/client';
 import { countWordsFromHtml, sanitizeContent, stripHtml } from '../utils/text';
 import { notifyNovelAndAuthorFollowers } from './notification.service';
 import * as notificationService from './notification.service';
 import * as cfg from '../config';
+import * as env from '../.env';
 
 // config / defaults
 const MIN_WORDS_PER_CHAPTER_EFFECTIVE = Number(cfg.MIN_WORDS_PER_CHAPTER ?? process.env.MIN_WORDS_PER_CHAPTER ?? 100);
@@ -19,6 +19,7 @@ function extractLinksFromHtml(html: string): string[] {
   const matches = html.match(/https?:\/\/[^\s"'<>]+/gi);
   return matches ?? [];
 }
+
 function domainOfUrl(urlStr: string): string | null {
   try {
     const u = new URL(urlStr);
@@ -28,13 +29,18 @@ function domainOfUrl(urlStr: string): string | null {
   }
 }
 
-/** create k-word shingles (lowercased) */
+/**
+ * Алгоритм шинглів: розбиває текст на набори з k слів для пошуку плагіату/дублікатів.
+ * * @param {string} text - Вхідний текст.
+ * @param {number} [k=5] - Довжина шингла.
+ * @returns {Set<string>} Унікальний набір шинглів.
+ */
 function shingles(text: string, k = 5): Set<string> {
   const words = text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter(Boolean);
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter(Boolean);
   const s = new Set<string>();
   if (words.length < k) {
     if (words.length > 0) s.add(words.join(' '));
@@ -45,6 +51,13 @@ function shingles(text: string, k = 5): Set<string> {
   }
   return s;
 }
+
+/**
+ * Індекс Жаккара: обчислює коефіцієнт подібності між двома множинами (шинглами).
+ * * @param {Set<string>} a - Перша множина шинглів.
+ * @param {Set<string>} b - Друга множина шинглів.
+ * @returns {number} Коефіцієнт від 0 до 1 (1 = повний збіг).
+ */
 function jaccard(a: Set<string>, b: Set<string>) {
   const A = a.size;
   const B = b.size;
@@ -69,11 +82,35 @@ function cyrillicRatio(text: string) {
   return cyrCount / letters.length;
 }
 
+/**
+ * Дані для створення нового розділу новели.
+ * @typedef {Object} CreateChapterInput
+ * @property {string} title - Назва розділу.
+ * @property {string} content - Контент розділу (HTML).
+ */
 type CreateChapterInput = {
   title: string;
   content: string;
 };
 
+/**
+ * Створює новий розділ для новели.
+ * * Бізнес-логіка:
+ * 1. Очищує HTML від шкідливого коду.
+ * 2. Перевіряє мінімальну кількість слів.
+ * 3. Аналізує текст на наявність дублікатів серед останніх глав (алгоритм шинглів та індекс Жаккара).
+ * 4. Перевіряє кількість унікальних зовнішніх посилань.
+ * 5. Визначає мову (співвідношення кирилиці до загальної кількості літер).
+ * 6. Зберігає розділ у межах транзакції та оновлює загальну кількість слів у новелі.
+ * 7. Надсилає сповіщення автору (якщо контент сумнівний) та підписникам.
+ * * @async
+ * @param {number} novelId - Ідентифікатор новели.
+ * @param {number} actorId - Ідентифікатор користувача, який створює розділ.
+ * @param {CreateChapterInput} input - Дані нового розділу.
+ * @returns {Promise<Object>} Створений об'єкт розділу.
+ * @throws {Error} CHAPTER_TOO_SHORT, якщо текст занадто короткий.
+ * @throws {Error} NOVEL_NOT_FOUND, якщо новели не існує.
+ */
 export async function createChapter(novelId: number, actorId: number, input: CreateChapterInput) {
   // sanitize and prepare (service-level)
   const cleanContent = sanitizeContent(input.content);
@@ -214,10 +251,10 @@ export async function createChapter(novelId: number, actorId: number, input: Cre
   setImmediate(() => {
     try {
       notifyNovelAndAuthorFollowers(
-        novelId,
-        actorId,
-        `Нова глава "${createdChapter.title}"`,
-        { targetType: 'chapter', targetId: createdChapter.id }
+          novelId,
+          actorId,
+          `Нова глава "${createdChapter.title}"`,
+          { targetType: 'chapter', targetId: createdChapter.id }
       );
     } catch (e) {
       console.warn('notify failed', e);
@@ -227,6 +264,14 @@ export async function createChapter(novelId: number, actorId: number, input: Cre
   return createdChapter;
 }
 
+/**
+ * Отримує список розділів для конкретної новели з пагінацією.
+ * * @async
+ * @param {number} novelId - Ідентифікатор новели.
+ * @param {number} [page=1] - Номер сторінки.
+ * @param {number} [limit=20] - Кількість елементів на сторінку.
+ * @returns {Promise<{items: Array, meta: {page: number, limit: number, total: number}}>} Список розділів та метадані пагінації.
+ */
 export async function listChaptersByNovel(novelId: number, page = 1, limit = 20) {
   const p = Math.max(1, page);
   const l = Math.min(100, Math.max(1, limit));
@@ -256,6 +301,12 @@ export async function listChaptersByNovel(novelId: number, page = 1, limit = 20)
   };
 }
 
+/**
+ * Отримує інформацію про розділ за його ідентифікатором, включаючи дані про новелу.
+ * * @async
+ * @param {number} id - Ідентифікатор розділу.
+ * @returns {Promise<Object | null>} Об'єкт розділу або null.
+ */
 export async function getChapterById(id: number) {
   const chapter = await prisma.chapter.findUnique({
     where: { id },
@@ -268,6 +319,15 @@ export async function getChapterById(id: number) {
   return chapter;
 }
 
+/**
+ * Оновлює контент або назву існуючого розділу та перераховує загальну кількість слів у новелі.
+ * * @async
+ * @param {number} chapterId - Ідентифікатор розділу.
+ * @param {Object} data - Нові дані для оновлення.
+ * @param {string} [data.title] - Нова назва розділу.
+ * @param {string} [data.content] - Новий контент розділу.
+ * @returns {Promise<Object | null>} Оновлений об'єкт розділу.
+ */
 export async function updateChapter(chapterId: number, data: { title?: string; content?: string }) {
   // sanitize if content provided
   const updates: any = {};
@@ -303,24 +363,14 @@ export async function updateChapter(chapterId: number, data: { title?: string; c
   return updated;
 }
 
+/**
+ * Видаляє розділ та перераховує загальну кількість слів у новелі.
+ * * @async
+ * @param {number} chapterId - Ідентифікатор розділу для видалення.
+ * @returns {Promise<{ok: boolean}>} Статус виконання.
+ * @throws {Error} CH_NOT_FOUND, якщо розділ не знайдено.
+ */
 export async function deleteChapter(chapterId: number) {
   return prisma.$transaction(async (tx) => {
     const ch = await tx.chapter.findUnique({ where: { id: chapterId } });
-    if (!ch) throw Object.assign(new Error('Chapter not found'), { code: 'CH_NOT_FOUND' });
-
-    await tx.chapter.delete({ where: { id: chapterId } });
-
-    // recompute sum
-    const sum = await tx.chapter.aggregate({
-      where: { novelId: ch.novelId },
-      _sum: { wordCount: true },
-    });
-    const totalWords = sum._sum.wordCount ?? 0;
-    await tx.novel.update({
-      where: { id: ch.novelId },
-      data: { wordCount: totalWords },
-    });
-
-    return { ok: true };
-  });
-}
+    if (!ch) throw Object.assign(new Error('Chapter not
