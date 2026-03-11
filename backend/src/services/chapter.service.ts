@@ -3,16 +3,15 @@ import { countWordsFromHtml, sanitizeContent, stripHtml } from '../utils/text';
 import { notifyNovelAndAuthorFollowers } from './notification.service';
 import * as notificationService from './notification.service';
 import * as cfg from '../config';
-import * as env from '../.env';
 
 // config / defaults
-const MIN_WORDS_PER_CHAPTER_EFFECTIVE = Number(cfg.MIN_WORDS_PER_CHAPTER ?? process.env.MIN_WORDS_PER_CHAPTER ?? 100);
-const DUPLICATE_CONTENT_THRESHOLD = Number(cfg.DUPLICATE_CONTENT_THRESHOLD ?? process.env.DUPLICATE_CONTENT_THRESHOLD ?? 0.6);
-const MAX_COMPARE_CHAPTERS = Number(cfg.MAX_COMPARE_CHAPTERS ?? process.env.MAX_COMPARE_CHAPTERS ?? 50);
-const MAX_EXTERNAL_LINKS = Number(cfg.MAX_EXTERNAL_LINKS ?? process.env.MAX_EXTERNAL_LINKS ?? 5);
+const MIN_WORDS_PER_CHAPTER_EFFECTIVE = Number(cfg.MIN_WORDS_PER_CHAPTER );
+const DUPLICATE_CONTENT_THRESHOLD = Number(cfg.DUPLICATE_CONTENT_THRESHOLD ?? 0.6);
+const MAX_COMPARE_CHAPTERS = Number(cfg.MAX_COMPARE_CHAPTERS ?? 50);
+const MAX_EXTERNAL_LINKS = Number(cfg.MAX_EXTERNAL_LINKS ?? 5);
 
-const LANG_DETECTION_ENABLED = (cfg.LANG_DETECTION_ENABLED ?? process.env.LANG_DETECTION_ENABLED ?? 'false') === 'true';
-const LANG_DETECTION_RATIO = Number(cfg.LANG_DETECTION_RATIO ?? process.env.LANG_DETECTION_RATIO ?? 0.6);
+const LANG_DETECTION_ENABLED = (cfg.LANG_DETECTION_ENABLED ?? 'false') === 'true';
+const LANG_DETECTION_RATIO = Number(cfg.LANG_DETECTION_RATIO ?? 0.6);
 
 /** helper: extract links & domain */
 function extractLinksFromHtml(html: string): string[] {
@@ -373,4 +372,21 @@ export async function updateChapter(chapterId: number, data: { title?: string; c
 export async function deleteChapter(chapterId: number) {
   return prisma.$transaction(async (tx) => {
     const ch = await tx.chapter.findUnique({ where: { id: chapterId } });
-    if (!ch) throw Object.assign(new Error('Chapter not
+    if (!ch) throw Object.assign(new Error('Chapter not found'), { code: 'CH_NOT_FOUND' });
+
+    await tx.chapter.delete({ where: { id: chapterId } });
+
+    // recompute sum
+    const sum = await tx.chapter.aggregate({
+      where: { novelId: ch.novelId },
+      _sum: { wordCount: true },
+    });
+    const totalWords = sum._sum.wordCount ?? 0;
+    await tx.novel.update({
+      where: { id: ch.novelId },
+      data: { wordCount: totalWords },
+    });
+
+    return { ok: true };
+  });
+}

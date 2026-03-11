@@ -1,0 +1,6 @@
+{
+  "devDependencies": {
+    "jsdoc": "^4.0.5",
+    "typedoc": "^0.28.17"
+  }
+}
