@@ -68,18 +68,18 @@
 ```mermaid
 flowchart TD
     Client((Web / Mobile Client)) <-->|HTTPS / 443| Proxy(Nginx Reverse Proxy)
-    
-    subgraph Ubuntu Server [Production Server - Ubuntu 22.04]
+
+    subgraph Ubuntu_Server ["Production Server - Ubuntu 22.04"]
         Proxy <-->|HTTP / 3000| PM2[PM2 Process Manager]
-        
-        subgraph Node Environment [Node.js Runtime]
+
+        subgraph Node_Environment ["Node.js Runtime"]
             PM2 --> API(Novel Platform API)
             API --> ORM(Prisma ORM)
-        </subgraph>
+        end
         
-        subgraph Database Subsystem [Docker Container]
+        subgraph Database_Subsystem ["Docker Container"]
             ORM <-->|TCP / 5432| DB[(PostgreSQL 14)]
-        </subgraph>
+        end
     end
 ```
 ### 3.2. ER-діаграма (Категорія даних)
