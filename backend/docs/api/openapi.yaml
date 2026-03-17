@@ -1,0 +1,195 @@
+openapi: 3.0.0
+info:
+  title: Novel Platform API
+  description: API для управління платформою новел (користувачі, розділи, коментарі).
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000/api
+    description: Локальний сервер розробки
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+    Chapter:
+      type: object
+      properties:
+        id:
+          type: integer
+        novelId:
+          type: integer
+        title:
+          type: string
+        content:
+          type: string
+        wordCount:
+          type: integer
+        order:
+          type: integer
+    Comment:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        text:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+    description: Автентифікація та управління акаунтом
+  - name: Chapters
+    description: Управління розділами новели
+  - name: Comments
+    description: Система коментарів
+
+paths:
+  # ================= AUTH =================
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Реєстрація нового користувача
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                username: { type: string }
+                email: { type: string }
+                password: { type: string }
+      responses:
+        '201':
+          description: Користувача створено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Email або Username вже зайняті
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Вхід у систему
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier: { type: string, description: "Email або username" }
+                password: { type: string }
+      responses:
+        '200':
+          description: Успішний вхід
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  user: { $ref: '#/components/schemas/User' }
+        '401':
+          description: Невірні облікові дані
+
+  # ================= CHAPTERS =================
+  /novels/{novelId}/chapters:
+    post:
+      tags: [Chapters]
+      summary: Додати новий розділ до новели
+      parameters:
+        - in: path
+          name: novelId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, content]
+              properties:
+                title: { type: string }
+                content: { type: string }
+      responses:
+        '201':
+          description: Розділ успішно створено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Chapter'
+    get:
+      tags: [Chapters]
+      summary: Отримати список розділів новели
+      security: []
+      parameters:
+        - in: path
+          name: novelId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Список розділів
+
+  # ================= COMMENTS =================
+  /comments:
+    post:
+      tags: [Comments]
+      summary: Створити коментар
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                novelId: { type: integer }
+                chapterId: { type: integer }
+                parentId: { type: integer }
+                text: { type: string }
+      responses:
+        '201':
+          description: Коментар створено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          description: Помилка валідації (наприклад, перевищено глибину відповідей)
