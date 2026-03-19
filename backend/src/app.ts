@@ -9,8 +9,10 @@ import commentRoutes from './routes/comment.routes';
 import reportsRouter from './routes/report.routes';
 import metaRouter from './routes/meta.routes';
 import { errorHandler } from './middlewares/errorHandler';
+import { requestContext } from './middlewares/requestLogger';
 
 const app = express();
+app.use(requestContext);
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
